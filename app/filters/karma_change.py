@@ -59,7 +59,7 @@ def get_karma_trigger(text: str) -> tuple[typing.Optional[float], str]:
         if changer:
             return changer, comment
         changer = has_minus_karma(possible_trigger)
-        if changer:
+        if changer and not is_a_list(text):
             return changer, comment
     return None, ""
 
@@ -74,6 +74,19 @@ def get_first_word(text: str) -> tuple[str, str]:
         comment = []
 
     return possible_trigger.lower().rstrip(PUNCTUATIONS), " ".join(comment)
+
+
+def is_a_list(text: str) -> bool:
+    args = text.split(maxsplit=1)
+
+    possible_trigger = args[0].lower().rstrip(PUNCTUATIONS)
+    if len(args) > 1:
+        comment_lines = args[1].splitlines()
+        for line in comment_lines:
+            if line.lower().startswith(possible_trigger):
+                return True
+
+    return False
 
 
 def has_plus_karma(possible_trigger: str) -> typing.Optional[float]:
