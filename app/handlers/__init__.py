@@ -7,6 +7,7 @@ from . import (
     chat_rules,
     errors,
     karma,
+    karma_reaction,
     moderator,
     settings,
     superuser,
@@ -17,6 +18,7 @@ def setup(dp: Dispatcher, bot: Bot, config: Config):
     errors.setup(dp, bot, config)
     dp.include_router(base.router)
     dp.include_router(change_karma.router)
+    dp.include_router(karma_reaction.router)
     dp.include_router(karma.router)
     dp.include_router(moderator.router)
     dp.include_router(settings.router)
