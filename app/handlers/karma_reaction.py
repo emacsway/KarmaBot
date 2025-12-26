@@ -1,7 +1,7 @@
 """Handler for karma changes via message reactions."""
 import asyncio
 
-from aiogram import Bot, Router, types
+from aiogram import Bot, F, Router, types
 from aiogram.enums import ChatMemberStatus
 from aiogram.types import LinkPreviewOptions, ReactionTypeEmoji
 from aiogram.utils.text_decorations import html_decoration as hd
@@ -10,6 +10,7 @@ from app.config.karmic_triggers import MINUS_EMOJI, PLUS_EMOJI
 from app.infrastructure.database.models import Chat, ChatSettings, User
 from app.infrastructure.database.repo.user import UserRepo
 from app.models.config import Config
+from app.services.adaptive_trottle import AdaptiveThrottle
 from app.services.change_karma import change_karma
 from app.services.karma_percentile import get_user_percentile
 from app.services.remove_message import delete_message, remove_kb
@@ -20,8 +21,10 @@ from . import keyboards as kb
 
 logger = Logger(__name__)
 router = Router(name=__name__)
+a_throttle = AdaptiveThrottle()
 
-# Reaction coefficient for karma change
+# Reaction coefficient - multiplier applied to reactor's power
+# karma_change = sign * reactor_power * REACTION_COEFFICIENT
 REACTION_COEFFICIENT = 0.1
 
 
@@ -34,17 +37,17 @@ def get_how_change_text(number: float) -> str:
         raise ValueError("karma_change must be float and not 0")
 
 
-def get_karma_change_from_reaction(emoji: str) -> float | None:
+def get_karma_change_sign_from_reaction(emoji: str) -> int | None:
     """
-    Determine karma change value from reaction emoji.
+    Determine karma change sign from reaction emoji.
 
     Returns:
-        Positive value for positive reactions, negative for negative, None if unknown
+        +1 for positive reactions, -1 for negative, None if unknown
     """
     if emoji in PLUS_EMOJI:
-        return REACTION_COEFFICIENT
+        return 1
     if emoji in MINUS_EMOJI:
-        return -REACTION_COEFFICIENT
+        return -1
     return None
 
 
@@ -68,7 +71,17 @@ async def is_user_chat_member(bot: Bot, chat_id: int, user_id: int) -> bool:
         return False
 
 
-@router.message_reaction()
+async def too_fast_change_karma_reaction(reaction: types.MessageReactionUpdated, *_, **__):
+    """Called when user changes karma via reactions too frequently."""
+    # Note: We can't reply to reactions, so we just log and ignore
+    logger.info(
+        "User {user} is changing karma via reactions too frequently",
+        user=reaction.user.id,
+    )
+
+
+@router.message_reaction(F.chat.type.in_(["group", "supergroup"]))
+@a_throttle.throttled(rate=30, on_throttled=too_fast_change_karma_reaction)
 async def on_reaction_change(
     reaction: types.MessageReactionUpdated,
     bot: Bot,
@@ -76,10 +89,6 @@ async def on_reaction_change(
     user_repo: UserRepo,
 ):
     """Handle message reaction updates."""
-    # Only process reactions in groups/supergroups
-    if reaction.chat.type not in ("group", "supergroup"):
-        return
-
     # Get or create user who reacted
     reactor_user = await user_repo.get_or_create_user(reaction.user)
 
@@ -134,29 +143,36 @@ async def on_reaction_change(
         return
 
     # Determine karma changes from added/removed reactions
-    karma_changes = []
+    karma_change_signs = []
 
     # Process new reactions (added)
     for new_reaction in reaction.new_reaction:
         if isinstance(new_reaction, ReactionTypeEmoji):
-            karma_change = get_karma_change_from_reaction(new_reaction.emoji)
-            if karma_change is not None:
-                karma_changes.append(karma_change)
+            sign = get_karma_change_sign_from_reaction(new_reaction.emoji)
+            if sign is not None:
+                karma_change_signs.append(sign)
 
     # Process removed reactions (subtract the reverse)
     for old_reaction in reaction.old_reaction:
         if isinstance(old_reaction, ReactionTypeEmoji):
-            karma_change = get_karma_change_from_reaction(old_reaction.emoji)
-            if karma_change is not None:
+            sign = get_karma_change_sign_from_reaction(old_reaction.emoji)
+            if sign is not None:
                 # Reverse the previous change
-                karma_changes.append(-karma_change)
+                karma_change_signs.append(-sign)
 
     # If no valid karma changes, return
-    if not karma_changes:
+    if not karma_change_signs:
         return
 
-    # Sum all karma changes
-    total_karma_change = sum(karma_changes)
+    # Sum all karma change signs
+    total_sign = sum(karma_change_signs)
+    if total_sign == 0:  # Ignore if signs cancel out
+        return
+
+    # Get reactor's power and apply REACTION_COEFFICIENT
+    reactor_power = await UserKarma.get_power(reactor_user, chat)
+    total_karma_change = total_sign * reactor_power * REACTION_COEFFICIENT
+
     if abs(total_karma_change) < 0.001:  # Ignore near-zero changes
         return
 
