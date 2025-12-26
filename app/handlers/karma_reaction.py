@@ -7,12 +7,12 @@ from aiogram.types import LinkPreviewOptions
 from aiogram.utils.text_decorations import html_decoration as hd
 
 from app.filters.karma_reaction import KarmaReactionFilter
+from app.filters.user_percentile import UserPercentileFilter
 from app.infrastructure.database.models import Chat, ChatSettings, User
 from app.infrastructure.database.repo.user import UserRepo
 from app.models.config import Config
 from app.services.adaptive_trottle import AdaptiveThrottle
 from app.services.change_karma import change_karma
-from app.services.karma_percentile import get_user_percentile
 from app.services.remove_message import delete_message, remove_kb
 from app.utils.exceptions import CantChangeKarma, DontOffendRestricted, SubZeroKarma
 from app.utils.log import Logger
@@ -71,6 +71,7 @@ async def too_fast_change_karma_reaction(
 @router.message_reaction(
     F.chat.type.in_(["group", "supergroup"]),
     KarmaReactionFilter(),
+    UserPercentileFilter(required_percentile=0.3),
 )
 @a_throttle.throttled(rate=30, on_throttled=too_fast_change_karma_reaction)
 async def on_reaction_change(
@@ -86,39 +87,6 @@ async def on_reaction_change(
     """Handle message reaction updates."""
     # Get data from filter
     total_karma_change = karma["karma_change"]
-
-    # Check if reactor is in top 30% by karma
-    required_percentile = 0.3
-    reactor_percentile = await get_user_percentile(user, chat)
-
-    if reactor_percentile is None or reactor_percentile >= required_percentile:
-        # User either has no karma or is not in top 30%
-        if reactor_percentile is not None:
-            # Show informational message for 10 seconds
-            try:
-                msg = await bot.send_message(
-                    chat_id=reaction.chat.id,
-                    text=(
-                        f"<b>{hd.quote(user.fullname)}</b>, для изменения кармы с помощью реакций "
-                        f"ваша карма должна быть в пределах Tоп-{required_percentile * 100:.0f}%, "
-                        f"в то время как ваша фактическая карма входит в Топ-{reactor_percentile * 100:.0f}%."
-                    ),
-                )
-                asyncio.create_task(delete_message(msg, 10))
-            except Exception as e:
-                logger.warning(
-                    "Failed to send percentile notification: {error}",
-                    error=e,
-                )
-
-        logger.info(
-            "User {user} not in top {percentile}%% in chat {chat} (actual: {actual}%%), reaction ignored",
-            user=user.tg_id,
-            percentile=required_percentile * 100,
-            actual=reactor_percentile * 100 if reactor_percentile is not None else "N/A",
-            chat=chat.chat_id,
-        )
-        return
 
     # Check if reactor is a chat member
     if not await is_user_chat_member(bot, reaction.chat.id, user.tg_id):
