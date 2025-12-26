@@ -83,6 +83,7 @@ class ReactionHasTargetFilter(BaseFilter):
                 "Failed to forward message to get author info: {error}",
                 error=e,
             )
+            raise
             return {}
 
         # Convert to DTO and return
