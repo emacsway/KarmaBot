@@ -49,8 +49,8 @@ async def cli(config: Config):
     await user_getter.start()
 
     # Start background cleanup task for messages
-    cleanup_task = MessageCleanupTask(interval_hours=24, retention_hours=90*24)
-    cleanup_task.start()
+    # cleanup_task = MessageCleanupTask(interval_hours=24, retention_hours=90*24)
+    # cleanup_task.start()
 
     middlewares.setup(dp, user_getter, config)
     logger.info("Configure handlers...")
