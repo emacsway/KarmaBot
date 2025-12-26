@@ -6,6 +6,7 @@ from aiogram.types import LinkPreviewOptions
 from aiogram.utils.text_decorations import html_decoration as hd
 
 from app.filters.karma_reaction import KarmaReactionFilter
+from app.filters.reaction_has_target import ReactionHasTargetFilter
 from app.filters.user_is_chat_member import UserIsChatMember
 from app.filters.user_percentile import UserPercentileFilter
 from app.infrastructure.database.models import Chat, ChatSettings, User
@@ -50,17 +51,19 @@ async def too_fast_change_karma_reaction(
 
 @router.message_reaction(
     F.chat.type.in_(["group", "supergroup"]),
+    ReactionHasTargetFilter(),
     KarmaReactionFilter(),
     UserPercentileFilter(required_percentile=0.3),
     UserIsChatMember(),
 )
-@a_throttle.throttled(rate=30, on_throttled=too_fast_change_karma_reaction)
+@a_throttle.throttled(rate=60, on_throttled=too_fast_change_karma_reaction)
 async def on_reaction_change(
     reaction: types.MessageReactionUpdated,
     karma: dict,
     user: User,
     chat: Chat,
     chat_settings: ChatSettings,
+    target: User,
     config: Config,
     bot: Bot,
     user_repo: UserRepo,
@@ -69,57 +72,11 @@ async def on_reaction_change(
     # Get data from filter
     total_karma_change = karma["karma_change"]
 
-    # Get message to determine its author (target user)
-    # NOTE: Telegram Bot API doesn't provide message author info in MessageReactionUpdated
-    # We try to forward the message to extract the original sender from forward_origin
-    # This requires the bot to have permission to forward messages
-    # TODO: Consider implementing a middleware to store message authors in DB for better reliability
-    try:
-        forwarded = await bot.forward_message(
-            chat_id=user.tg_id,
-            from_chat_id=chat.chat_id,
-            message_id=reaction.message_id,
-        )
-
-        # Extract original sender from forward origin
-        target_tg_user = None
-        if forwarded.forward_origin:
-            if hasattr(forwarded.forward_origin, 'sender_user') and forwarded.forward_origin.sender_user:
-                target_tg_user = forwarded.forward_origin.sender_user
-            else:
-                # User has hidden their account or it's a channel message
-                logger.debug(
-                    "Can't determine message owner from forward origin in chat {chat} (hidden account or channel)",
-                    chat=chat.chat_id,
-                )
-                return
-        # If message wasn't forwarded, it might be from a bot or the original message in the chat
-        # We can use the `from` field from the forwarded message
-        elif forwarded.from_user and not forwarded.from_user.is_bot:
-            target_tg_user = forwarded.from_user
-
-        if target_tg_user is None:
-            logger.debug(
-                "Can't determine message author for reaction in chat {chat}",
-                chat=chat.chat_id,
-            )
-            return
-
-    except Exception as e:
-        logger.warning(
-            "Failed to forward message to get author info: {error}",
-            error=e,
-        )
-        return
-
-    # Get or create target user
-    target_user = await user_repo.get_or_create_user(target_tg_user)
-
     # Change karma
     try:
         result_change_karma = await change_karma(
             user=user,
-            target_user=target_user,
+            target_user=target,
             chat=chat,
             how_change=total_karma_change,
             is_restriction_enabled=chat_settings.karmic_restrictions,
@@ -142,11 +99,11 @@ async def on_reaction_change(
     # Prepare notification text
     if result_change_karma.was_auto_restricted:
         notify_text = config.auto_restriction.render_auto_restriction(
-            target_user, result_change_karma.count_auto_restrict
+            target, result_change_karma.count_auto_restrict
         )
     elif result_change_karma.karma_after < 0 and chat_settings.karmic_restrictions:
         notify_text = config.auto_restriction.render_negative_karma_notification(
-            target_user, result_change_karma.count_auto_restrict
+            target, result_change_karma.count_auto_restrict
         )
     else:
         notify_text = ""
@@ -166,7 +123,7 @@ async def on_reaction_change(
             "до <b>{karma_new:.2f}</b> ({power:+.2f}) (реакция)\n\n{notify_text}".format(
                 actor_name=hd.quote(user.fullname),
                 how_change=get_how_change_text(total_karma_change),
-                target_name=hd.quote(target_user.fullname),
+                target_name=hd.quote(target.fullname),
                 karma_new=result_change_karma.karma_after,
                 power=result_change_karma.abs_change,
                 notify_text=notify_text,
