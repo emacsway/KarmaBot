@@ -27,7 +27,6 @@ class UserPercentileFilter(BaseFilter):
 
     async def __call__(
         self,
-        reaction: types.MessageReactionUpdated,
         user: User,
         chat: Chat,
         bot: Bot,
@@ -36,9 +35,8 @@ class UserPercentileFilter(BaseFilter):
         Check if user's karma is in top percentile.
 
         Args:
-            reaction: Message reaction update event
             user: User who reacted (from DBMiddleware)
-            chat: Chat where reaction occurred (from DBMiddleware)
+            chat: Chat where reaction/message occurred (from DBMiddleware)
             bot: Bot instance
 
         Returns:
@@ -52,7 +50,7 @@ class UserPercentileFilter(BaseFilter):
                 # Show informational message for 10 seconds
                 try:
                     msg = await bot.send_message(
-                        chat_id=reaction.chat.id,
+                        chat_id=chat.chat_id,
                         text=(
                             f"<b>{hd.quote(user.fullname)}</b>, для изменения кармы с помощью реакций "
                             f"ваша карма должна быть в пределах Tоп-{self.required_percentile * 100:.0f}%, "

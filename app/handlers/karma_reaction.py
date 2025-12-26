@@ -2,11 +2,11 @@
 import asyncio
 
 from aiogram import Bot, F, Router, types
-from aiogram.enums import ChatMemberStatus
 from aiogram.types import LinkPreviewOptions
 from aiogram.utils.text_decorations import html_decoration as hd
 
 from app.filters.karma_reaction import KarmaReactionFilter
+from app.filters.user_is_chat_member import UserIsChatMember
 from app.filters.user_percentile import UserPercentileFilter
 from app.infrastructure.database.models import Chat, ChatSettings, User
 from app.infrastructure.database.repo.user import UserRepo
@@ -33,26 +33,6 @@ def get_how_change_text(number: float) -> str:
         raise ValueError("karma_change must be float and not 0")
 
 
-async def is_user_chat_member(bot: Bot, chat_id: int, user_id: int) -> bool:
-    """Check if user is a member of the chat."""
-    try:
-        member = await bot.get_chat_member(chat_id, user_id)
-        return member.status in (
-            ChatMemberStatus.CREATOR,
-            ChatMemberStatus.ADMINISTRATOR,
-            ChatMemberStatus.MEMBER,
-            ChatMemberStatus.RESTRICTED,
-        )
-    except Exception as e:
-        logger.warning(
-            "Failed to check chat membership for user {user_id} in chat {chat_id}: {error}",
-            user_id=user_id,
-            chat_id=chat_id,
-            error=e,
-        )
-        return False
-
-
 async def too_fast_change_karma_reaction(
     reaction: types.MessageReactionUpdated,
     user: User | None = None,
@@ -72,6 +52,7 @@ async def too_fast_change_karma_reaction(
     F.chat.type.in_(["group", "supergroup"]),
     KarmaReactionFilter(),
     UserPercentileFilter(required_percentile=0.3),
+    UserIsChatMember(),
 )
 @a_throttle.throttled(rate=30, on_throttled=too_fast_change_karma_reaction)
 async def on_reaction_change(
@@ -88,15 +69,6 @@ async def on_reaction_change(
     # Get data from filter
     total_karma_change = karma["karma_change"]
 
-    # Check if reactor is a chat member
-    if not await is_user_chat_member(bot, reaction.chat.id, user.tg_id):
-        logger.info(
-            "User {user} is not a member of chat {chat}, reaction ignored",
-            user=user.tg_id,
-            chat=chat.chat_id,
-        )
-        return
-
     # Get message to determine its author (target user)
     # NOTE: Telegram Bot API doesn't provide message author info in MessageReactionUpdated
     # We try to forward the message to extract the original sender from forward_origin
@@ -105,7 +77,7 @@ async def on_reaction_change(
     try:
         forwarded = await bot.forward_message(
             chat_id=user.tg_id,
-            from_chat_id=reaction.chat.id,
+            from_chat_id=chat.chat_id,
             message_id=reaction.message_id,
         )
 
@@ -189,7 +161,7 @@ async def on_reaction_change(
     # Send notification message
     try:
         msg = await bot.send_message(
-            chat_id=reaction.chat.id,
+            chat_id=chat.chat_id,
             text="<b>{actor_name}</b>, Вы {how_change} карму <b>{target_name}</b> "
             "до <b>{karma_new:.2f}</b> ({power:+.2f}) (реакция)\n\n{notify_text}".format(
                 actor_name=hd.quote(user.fullname),
