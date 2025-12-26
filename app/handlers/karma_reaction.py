@@ -75,7 +75,7 @@ async def too_fast_change_karma_reaction(
 @a_throttle.throttled(rate=30, on_throttled=too_fast_change_karma_reaction)
 async def on_reaction_change(
     reaction: types.MessageReactionUpdated,
-    karma_reaction: dict,
+    karma: dict,
     user: User,
     chat: Chat,
     chat_settings: ChatSettings,
@@ -85,7 +85,7 @@ async def on_reaction_change(
 ):
     """Handle message reaction updates."""
     # Get data from filter
-    total_karma_change = karma_reaction["karma_change"]
+    total_karma_change = karma["karma_change"]
 
     # Check if reactor is in top 30% by karma
     required_percentile = 0.3
@@ -185,7 +185,7 @@ async def on_reaction_change(
             is_restriction_enabled=chat_settings.karmic_restrictions,
             bot=bot,
             user_repo=user_repo,
-            comment="(реакция)",
+            comment=karma["comment"],
         )
     except SubZeroKarma:
         return  # Silent fail for reactions
