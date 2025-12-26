@@ -4,27 +4,26 @@ from tortoise import Tortoise
 from app.infrastructure.database.models import Chat, User, UserKarma
 
 
-async def _is_user_in_top_percentile_generic(user: User, chat: Chat, percentile: float = 0.3) -> bool:
+async def _get_user_percentile_generic(user: User, chat: Chat) -> float | None:
     """
-    Check if user's karma is in top N percentile in the chat.
+    Get user's percentile position in the chat by karma.
 
     Args:
         user: User to check
         chat: Chat context
-        percentile: Percentile threshold (0.3 = top 30%)
 
     Returns:
-        True if user is in top percentile, False otherwise
+        User's percentile position (0.0 = top, 1.0 = bottom), or None if user has no karma
     """
     # Get user's karma in this chat
     user_karma = await UserKarma.get_or_none(user=user, chat=chat)
     if user_karma is None:
-        return False
+        return None
 
     # Get total count of users with karma in this chat
     total_users = await UserKarma.filter(chat=chat).count()
     if total_users == 0:
-        return False
+        return None
 
     # Get count of users with karma higher than current user
     users_with_higher_karma = await UserKarma.filter(
@@ -35,8 +34,7 @@ async def _is_user_in_top_percentile_generic(user: User, chat: Chat, percentile:
     # Calculate user's position (0 = top, 1 = bottom)
     user_position = users_with_higher_karma / total_users
 
-    # Check if user is in top percentile
-    return user_position < percentile
+    return user_position
 
 
 def _is_postgres_backend() -> bool:
@@ -51,9 +49,9 @@ def _is_postgres_backend() -> bool:
         return False
 
 
-async def is_user_in_top_percentile(user: User, chat: Chat, percentile: float = 0.3) -> bool:
+async def get_user_percentile(user: User, chat: Chat) -> float | None:
     """
-    Check if user's karma is in top N percentile in the chat.
+    Get user's percentile position in the chat by karma.
 
     Automatically uses PostgreSQL-optimized implementation if available,
     otherwise falls back to generic implementation.
@@ -61,15 +59,14 @@ async def is_user_in_top_percentile(user: User, chat: Chat, percentile: float = 
     Args:
         user: User to check
         chat: Chat context
-        percentile: Percentile threshold (0.3 = top 30%)
 
     Returns:
-        True if user is in top percentile, False otherwise
+        User's percentile position (0.0 = top, 1.0 = bottom), or None if user has no karma
     """
     if _is_postgres_backend():
         # Use PostgreSQL-optimized implementation
-        from app.services.karma_percentile_pg import is_user_in_top_percentile as pg_impl
-        return await pg_impl(user, chat, percentile)
+        from app.services.karma_percentile_pg import get_user_percentile as pg_impl
+        return await pg_impl(user, chat)
     else:
         # Use generic implementation
-        return await _is_user_in_top_percentile_generic(user, chat, percentile)
+        return await _get_user_percentile_generic(user, chat)

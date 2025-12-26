@@ -11,7 +11,7 @@ from app.infrastructure.database.models import Chat, ChatSettings, User
 from app.infrastructure.database.repo.user import UserRepo
 from app.models.config import Config
 from app.services.change_karma import change_karma
-from app.services.karma_percentile import is_user_in_top_percentile
+from app.services.karma_percentile import get_user_percentile
 from app.services.remove_message import delete_message, remove_kb
 from app.utils.exceptions import CantChangeKarma, DontOffendRestricted, SubZeroKarma
 from app.utils.log import Logger
@@ -92,10 +92,34 @@ async def on_reaction_change(
         return
 
     # Check if reactor is in top 30% by karma
-    if not await is_user_in_top_percentile(reactor_user, chat, percentile=0.3):
+    required_percentile = 0.3
+    reactor_percentile = await get_user_percentile(reactor_user, chat)
+
+    if reactor_percentile is None or reactor_percentile >= required_percentile:
+        # User either has no karma or is not in top 30%
+        if reactor_percentile is not None:
+            # Show informational message for 10 seconds
+            try:
+                msg = await bot.send_message(
+                    chat_id=reaction.chat.id,
+                    text=(
+                        f"<b>{hd.quote(reactor_user.fullname)}</b>, для изменения кармы с помощью реакций "
+                        f"ваша карма должна быть в пределах Tоп-{required_percentile * 100:.0f}%, "
+                        f"в то время как ваша фактическая карма входит в Топ-{reactor_percentile * 100:.0f}%."
+                    ),
+                )
+                asyncio.create_task(delete_message(msg, 10))
+            except Exception as e:
+                logger.warning(
+                    "Failed to send percentile notification: {error}",
+                    error=e,
+                )
+
         logger.info(
-            "User {user} not in top 30%% in chat {chat}, reaction ignored",
+            "User {user} not in top {percentile}%% in chat {chat} (actual: {actual}%%), reaction ignored",
             user=reactor_user.tg_id,
+            percentile=required_percentile * 100,
+            actual=reactor_percentile * 100 if reactor_percentile is not None else "N/A",
             chat=chat.chat_id,
         )
         return

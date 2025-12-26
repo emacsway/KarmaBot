@@ -4,47 +4,44 @@ from tortoise import Tortoise
 from app.infrastructure.database.models import Chat, User, UserKarma
 
 
-async def is_user_in_top_percentile(user: User, chat: Chat, percentile: float = 0.3) -> bool:
+async def get_user_percentile(user: User, chat: Chat) -> float | None:
     """
-    Check if user's karma is in top N percentile in the chat.
+    Get user's percentile position in the chat by karma.
 
-    PostgreSQL-optimized version using percentile_cont() function.
+    PostgreSQL-optimized version using PERCENT_RANK() window function.
 
     Args:
         user: User to check
         chat: Chat context
-        percentile: Percentile threshold (0.3 = top 30%)
 
     Returns:
-        True if user is in top percentile, False otherwise
+        User's percentile position (0.0 = top, 1.0 = bottom), or None if user has no karma
     """
     # Get user's karma in this chat
     user_karma = await UserKarma.get_or_none(user=user, chat=chat)
     if user_karma is None:
-        return False
+        return None
 
     # Get connection to execute raw SQL
     conn = Tortoise.get_connection("default")
 
-    # Calculate threshold karma value for the given percentile
-    # If we want top 30%, we need karma >= 70th percentile (1 - 0.3 = 0.7)
-    threshold_percentile = 1.0 - percentile
-
-    # Use percentile_cont() to calculate the threshold karma value
-    # percentile_cont(0.7) returns the value where 70% of values are below it
+    # Use PERCENT_RANK() to calculate user's percentile position
+    # PERCENT_RANK() OVER (ORDER BY karma DESC) returns percentile where 0 = highest karma
     sql = """
-        SELECT percentile_cont($1) WITHIN GROUP (ORDER BY karma) AS threshold
-        FROM user_karma
-        WHERE chat_id = $2
+        WITH user_rank AS (
+            SELECT
+                user_id,
+                PERCENT_RANK() OVER (ORDER BY karma DESC) as percentile
+            FROM user_karma
+            WHERE chat_id = $1
+        )
+        SELECT percentile FROM user_rank WHERE user_id = $2
     """
 
-    result = await conn.execute_query_dict(sql, [threshold_percentile, chat.pk])
+    result = await conn.execute_query_dict(sql, [chat.pk, user.pk])
 
-    if not result or result[0]["threshold"] is None:
-        # No users in chat or no karma data
-        return False
+    if not result:
+        # User not found in chat
+        return None
 
-    threshold = float(result[0]["threshold"])
-
-    # Check if user's karma is above or equal to the threshold
-    return user_karma.karma >= threshold
+    return float(result[0]["percentile"])
