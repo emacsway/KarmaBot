@@ -3,10 +3,10 @@ import asyncio
 
 from aiogram import Bot, F, Router, types
 from aiogram.enums import ChatMemberStatus
-from aiogram.types import LinkPreviewOptions, ReactionTypeEmoji
+from aiogram.types import LinkPreviewOptions
 from aiogram.utils.text_decorations import html_decoration as hd
 
-from app.config.karmic_triggers import MINUS_EMOJI, PLUS_EMOJI
+from app.filters.karma_reaction import KarmaReactionFilter
 from app.infrastructure.database.models import Chat, ChatSettings, User
 from app.infrastructure.database.repo.user import UserRepo
 from app.models.config import Config
@@ -23,10 +23,6 @@ logger = Logger(__name__)
 router = Router(name=__name__)
 a_throttle = AdaptiveThrottle()
 
-# Reaction coefficient - multiplier applied to reactor's power
-# karma_change = sign * reactor_power * REACTION_COEFFICIENT
-REACTION_COEFFICIENT = 0.1
-
 
 def get_how_change_text(number: float) -> str:
     if number > 0:
@@ -35,20 +31,6 @@ def get_how_change_text(number: float) -> str:
         return "уменьшили"
     else:
         raise ValueError("karma_change must be float and not 0")
-
-
-def get_karma_change_sign_from_reaction(emoji: str) -> int | None:
-    """
-    Determine karma change sign from reaction emoji.
-
-    Returns:
-        +1 for positive reactions, -1 for negative, None if unknown
-    """
-    if emoji in PLUS_EMOJI:
-        return 1
-    if emoji in MINUS_EMOJI:
-        return -1
-    return None
 
 
 async def is_user_chat_member(bot: Bot, chat_id: int, user_id: int) -> bool:
@@ -71,38 +53,43 @@ async def is_user_chat_member(bot: Bot, chat_id: int, user_id: int) -> bool:
         return False
 
 
-async def too_fast_change_karma_reaction(reaction: types.MessageReactionUpdated, *_, **__):
+async def too_fast_change_karma_reaction(
+    reaction: types.MessageReactionUpdated,
+    user: User | None = None,
+    *_,
+    **__
+):
     """Called when user changes karma via reactions too frequently."""
     # Note: We can't reply to reactions, so we just log and ignore
+    user_id = user.tg_id if user else reaction.user.id
     logger.info(
         "User {user} is changing karma via reactions too frequently",
-        user=reaction.user.id,
+        user=user_id,
     )
 
 
-@router.message_reaction(F.chat.type.in_(["group", "supergroup"]))
+@router.message_reaction(
+    F.chat.type.in_(["group", "supergroup"]),
+    KarmaReactionFilter(),
+)
 @a_throttle.throttled(rate=30, on_throttled=too_fast_change_karma_reaction)
 async def on_reaction_change(
     reaction: types.MessageReactionUpdated,
-    bot: Bot,
+    karma_reaction: dict,
+    user: User,
+    chat: Chat,
+    chat_settings: ChatSettings,
     config: Config,
+    bot: Bot,
     user_repo: UserRepo,
 ):
     """Handle message reaction updates."""
-    # Get or create user who reacted
-    reactor_user = await user_repo.get_or_create_user(reaction.user)
-
-    # Get or create chat
-    chat, _ = await Chat.get_or_create(chat_id=reaction.chat.id)
-
-    # Get chat settings
-    chat_settings = await ChatSettings.get_or_none(chat=chat)
-    if chat_settings is None or not chat_settings.karma_counting:
-        return
+    # Get data from filter
+    total_karma_change = karma_reaction["karma_change"]
 
     # Check if reactor is in top 30% by karma
     required_percentile = 0.3
-    reactor_percentile = await get_user_percentile(reactor_user, chat)
+    reactor_percentile = await get_user_percentile(user, chat)
 
     if reactor_percentile is None or reactor_percentile >= required_percentile:
         # User either has no karma or is not in top 30%
@@ -112,7 +99,7 @@ async def on_reaction_change(
                 msg = await bot.send_message(
                     chat_id=reaction.chat.id,
                     text=(
-                        f"<b>{hd.quote(reactor_user.fullname)}</b>, для изменения кармы с помощью реакций "
+                        f"<b>{hd.quote(user.fullname)}</b>, для изменения кармы с помощью реакций "
                         f"ваша карма должна быть в пределах Tоп-{required_percentile * 100:.0f}%, "
                         f"в то время как ваша фактическая карма входит в Топ-{reactor_percentile * 100:.0f}%."
                     ),
@@ -126,7 +113,7 @@ async def on_reaction_change(
 
         logger.info(
             "User {user} not in top {percentile}%% in chat {chat} (actual: {actual}%%), reaction ignored",
-            user=reactor_user.tg_id,
+            user=user.tg_id,
             percentile=required_percentile * 100,
             actual=reactor_percentile * 100 if reactor_percentile is not None else "N/A",
             chat=chat.chat_id,
@@ -134,46 +121,12 @@ async def on_reaction_change(
         return
 
     # Check if reactor is a chat member
-    if not await is_user_chat_member(bot, reaction.chat.id, reaction.user.id):
+    if not await is_user_chat_member(bot, reaction.chat.id, user.tg_id):
         logger.info(
             "User {user} is not a member of chat {chat}, reaction ignored",
-            user=reactor_user.tg_id,
+            user=user.tg_id,
             chat=chat.chat_id,
         )
-        return
-
-    # Determine karma changes from added/removed reactions
-    karma_change_signs = []
-
-    # Process new reactions (added)
-    for new_reaction in reaction.new_reaction:
-        if isinstance(new_reaction, ReactionTypeEmoji):
-            sign = get_karma_change_sign_from_reaction(new_reaction.emoji)
-            if sign is not None:
-                karma_change_signs.append(sign)
-
-    # Process removed reactions (subtract the reverse)
-    for old_reaction in reaction.old_reaction:
-        if isinstance(old_reaction, ReactionTypeEmoji):
-            sign = get_karma_change_sign_from_reaction(old_reaction.emoji)
-            if sign is not None:
-                # Reverse the previous change
-                karma_change_signs.append(-sign)
-
-    # If no valid karma changes, return
-    if not karma_change_signs:
-        return
-
-    # Sum all karma change signs
-    total_sign = sum(karma_change_signs)
-    if total_sign == 0:  # Ignore if signs cancel out
-        return
-
-    # Get reactor's power and apply REACTION_COEFFICIENT
-    reactor_power = await UserKarma.get_power(reactor_user, chat)
-    total_karma_change = total_sign * reactor_power * REACTION_COEFFICIENT
-
-    if abs(total_karma_change) < 0.001:  # Ignore near-zero changes
         return
 
     # Get message to determine its author (target user)
@@ -183,7 +136,7 @@ async def on_reaction_change(
     # TODO: Consider implementing a middleware to store message authors in DB for better reliability
     try:
         forwarded = await bot.forward_message(
-            chat_id=reaction.user.id,
+            chat_id=user.tg_id,
             from_chat_id=reaction.chat.id,
             message_id=reaction.message_id,
         )
@@ -225,7 +178,7 @@ async def on_reaction_change(
     # Change karma
     try:
         result_change_karma = await change_karma(
-            user=reactor_user,
+            user=user,
             target_user=target_user,
             chat=chat,
             how_change=total_karma_change,
@@ -241,7 +194,7 @@ async def on_reaction_change(
     except CantChangeKarma as e:
         logger.info(
             "User {user} can't change karma via reaction, {e}",
-            user=reactor_user.tg_id,
+            user=user.tg_id,
             e=e,
         )
         return
@@ -271,7 +224,7 @@ async def on_reaction_change(
             chat_id=reaction.chat.id,
             text="<b>{actor_name}</b>, Вы {how_change} карму <b>{target_name}</b> "
             "до <b>{karma_new:.2f}</b> ({power:+.2f}) (реакция)\n\n{notify_text}".format(
-                actor_name=hd.quote(reactor_user.fullname),
+                actor_name=hd.quote(user.fullname),
                 how_change=get_how_change_text(total_karma_change),
                 target_name=hd.quote(target_user.fullname),
                 karma_new=result_change_karma.karma_after,
@@ -280,7 +233,7 @@ async def on_reaction_change(
             ),
             link_preview_options=LinkPreviewOptions(is_disabled=True),
             reply_markup=kb.get_kb_karma_cancel(
-                user=reactor_user,
+                user=user,
                 karma_event=result_change_karma.karma_event,
                 rollback_karma=-how_changed_karma,
                 moderator_event=result_change_karma.moderator_event,
