@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from aiogram import Bot, types
 from aiogram.filters import BaseFilter
 
-from app.infrastructure.database.models import Chat, User
+from app.infrastructure.database.models import Chat, Message, User
 from app.models import dto
 from app.services.find_target_user import has_target_user
 from app.utils.log import Logger
@@ -42,54 +42,40 @@ class ReactionHasTargetFilter(BaseFilter):
         Returns:
             Dict with target user if found, empty dict otherwise
         """
-        # Get message to determine its author (target user)
-        # NOTE: Telegram Bot API doesn't provide message author info in MessageReactionUpdated
-        # We try to forward the message to extract the original sender from forward_origin
-        # This requires the bot to have permission to forward messages
-        # TODO: Consider implementing a middleware to store message authors in DB for better reliability
-        try:
-            forwarded = await bot.forward_message(
-                chat_id=user.tg_id,
-                from_chat_id=chat.chat_id,
-                message_id=reaction.message_id,
+        # Get message author from database
+        # MessageMiddleware stores authors when messages are sent
+        target_user_model = await Message.get_author(
+            chat_id=chat.pk,
+            message_id=reaction.message_id,
+        )
+
+        if target_user_model is None:
+            logger.debug(
+                "Message author not found in database for chat {chat}, message_id {msg_id}. "
+                "Message might be too old or sent before MessageMiddleware was enabled.",
+                chat=chat.pk,
+                msg_id=reaction.message_id,
             )
-
-            # Extract original sender from forward origin
-            target_tg_user = None
-            if forwarded.forward_origin:
-                if hasattr(forwarded.forward_origin, 'sender_user') and forwarded.forward_origin.sender_user:
-                    target_tg_user = forwarded.forward_origin.sender_user
-                else:
-                    # User has hidden their account or it's a channel message
-                    logger.debug(
-                        "Can't determine message owner from forward origin in chat {chat} (hidden account or channel)",
-                        chat=chat.chat_id,
-                    )
-                    return {}
-            # If message wasn't forwarded, it might be from a bot or the original message in the chat
-            # We can use the `from` field from the forwarded message
-            elif forwarded.from_user and not forwarded.from_user.is_bot:
-                target_tg_user = forwarded.from_user
-
-            if target_tg_user is None:
-                logger.debug(
-                    "Can't determine message author for reaction in chat {chat}",
-                    chat=chat.chat_id,
-                )
-                return {}
-
-        except Exception as e:
-            logger.warning(
-                "Failed to forward message to get author info: {error}",
-                error=e,
-            )
-            raise
             return {}
 
-        # Convert to DTO and return
-        # FixTargetMiddleware will convert this to database User model
-        author_user = dto.TargetUser.from_aiogram(reaction.user)
-        target_user = dto.TargetUser.from_aiogram(target_tg_user)
+        # Convert to DTO for has_target_user check
+        author_user = dto.TargetUser(
+            id=user.tg_id,
+            username=user.username,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            is_bot=user.is_bot,
+        )
+        target_user = dto.TargetUser(
+            id=target_user_model.tg_id,
+            username=target_user_model.username,
+            first_name=target_user_model.first_name,
+            last_name=target_user_model.last_name,
+            is_bot=target_user_model.is_bot,
+        )
+
+        # Check if target is valid (not self, not bot, etc.)
         if has_target_user(target_user, author_user, self.can_be_same, self.can_be_bot):
             return {"target": target_user}
+
         return {}

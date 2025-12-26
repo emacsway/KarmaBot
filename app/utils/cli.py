@@ -8,6 +8,7 @@ import app
 from app import handlers, middlewares
 from app.models.config import Config
 from app.models.db import db
+from app.services.message_cleanup import MessageCleanupTask
 from app.services.user_getter import UserGetter
 from app.utils.executor import on_startup_notify, on_startup_webhook
 from app.utils.log import Logger
@@ -46,6 +47,11 @@ async def cli(config: Config):
     logger.debug(f"As application dir using: {config.app_dir}")
     user_getter = UserGetter(config.tg_client)
     await user_getter.start()
+
+    # Start background cleanup task for messages
+    cleanup_task = MessageCleanupTask(interval_hours=24, retention_hours=90*24)
+    cleanup_task.start()
+
     middlewares.setup(dp, user_getter, config)
     logger.info("Configure handlers...")
     handlers.setup(dp, bot, config)
@@ -59,5 +65,6 @@ async def cli(config: Config):
             await on_startup_webhook(bot, config.webhook)
             raise NotImplementedError("webhook are not implemented now")
     finally:
+        await cleanup_task.stop()
         await db.on_shutdown()
         await user_getter.stop()

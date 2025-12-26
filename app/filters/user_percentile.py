@@ -23,10 +23,11 @@ class UserPercentileFilter(BaseFilter):
     and blocks the event.
     """
 
-    required_percentile: float = 0.3  # Top 30% by default
+    required_percentile: float = 0.5  # Top 30% by default
 
     async def __call__(
         self,
+        reaction: types.MessageReactionUpdated,
         user: User,
         chat: Chat,
         bot: Bot,
@@ -35,6 +36,7 @@ class UserPercentileFilter(BaseFilter):
         Check if user's karma is in top percentile.
 
         Args:
+            reaction: Message reaction update event
             user: User who reacted (from DBMiddleware)
             chat: Chat where reaction/message occurred (from DBMiddleware)
             bot: Bot instance

@@ -4,6 +4,7 @@ from aiogram import Dispatcher
 from app.middlewares.config_middleware import ConfigMiddleware
 from app.middlewares.db_middleware import DBMiddleware
 from app.middlewares.fix_target_middleware import FixTargetMiddleware
+from app.middlewares.message_middleware import MessageMiddleware
 from app.models.config import Config
 from app.services.user_getter import UserGetter
 from app.utils.log import Logger
@@ -20,5 +21,6 @@ def setup(dispatcher: Dispatcher, user_getter: UserGetter, config: Config):
     dispatcher.message.outer_middleware.register(db_middleware_)
     dispatcher.callback_query.outer_middleware.register(db_middleware_)
     dispatcher.message_reaction.outer_middleware.register(db_middleware_)
+    dispatcher.message.outer_middleware.register(MessageMiddleware())
     dispatcher.message.middleware.register(FixTargetMiddleware(user_getter))
     dispatcher.message_reaction.middleware.register(FixTargetMiddleware(user_getter))

@@ -21,6 +21,7 @@ class UserIsChatMember(BaseFilter):
 
     async def __call__(
         self,
+        reaction: types.MessageReactionUpdated,
         user: User,
         chat: Chat,
         bot: Bot,
@@ -29,6 +30,7 @@ class UserIsChatMember(BaseFilter):
         Check if user is a member of the chat.
 
         Args:
+            reaction: Message reaction update event
             user: User who reacted (from DBMiddleware)
             chat: Chat where reaction/message occurred (from DBMiddleware)
             bot: Bot instance

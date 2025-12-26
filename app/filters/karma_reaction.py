@@ -99,6 +99,6 @@ class KarmaReactionFilter(BaseFilter):
         return {
             "karma": {
                 "karma_change": total_karma_change,
-                "comment": "(реакция %s)" % (comment,),
+                "comment": "(reaction %s)" % (comment,),
             }
         }

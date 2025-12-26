@@ -37,23 +37,38 @@ def get_how_change_text(number: float) -> str:
 async def too_fast_change_karma_reaction(
     reaction: types.MessageReactionUpdated,
     user: User | None = None,
+    chat: Chat | None = None,
+    bot: Bot | None = None,
     *_,
     **__
 ):
     """Called when user changes karma via reactions too frequently."""
-    # Note: We can't reply to reactions, so we just log and ignore
     user_id = user.tg_id if user else reaction.user.id
     logger.info(
         "User {user} is changing karma via reactions too frequently",
         user=user_id,
     )
 
+    # Send notification message
+    if bot and chat and user:
+        try:
+            msg = await bot.send_message(
+                chat_id=chat.chat_id,
+                text=f"<b>{hd.quote(user.fullname)}</b>, Вы слишком часто меняете карму",
+            )
+            asyncio.create_task(delete_message(msg, 10))
+        except Exception as e:
+            logger.warning(
+                "Failed to send throttle notification: {error}",
+                error=e,
+            )
+
 
 @router.message_reaction(
     F.chat.type.in_(["group", "supergroup"]),
     ReactionHasTargetFilter(),
     KarmaReactionFilter(),
-    UserPercentileFilter(required_percentile=0.3),
+    UserPercentileFilter(required_percentile=0.5),
     UserIsChatMember(),
 )
 @a_throttle.throttled(rate=60, on_throttled=too_fast_change_karma_reaction)
