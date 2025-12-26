@@ -8,6 +8,7 @@ from aiogram.utils.text_decorations import html_decoration as hd
 from app.filters.karma_reaction import KarmaReactionFilter
 from app.filters.reaction_has_target import ReactionHasTargetFilter
 from app.filters.user_is_chat_member import UserIsChatMember
+from app.filters.user_not_restricted import UserNotRestricted
 from app.filters.user_percentile import UserPercentileFilter
 from app.infrastructure.database.models import Chat, ChatSettings, User
 from app.infrastructure.database.repo.user import UserRepo
@@ -70,6 +71,7 @@ async def too_fast_change_karma_reaction(
     KarmaReactionFilter(),
     UserPercentileFilter(required_percentile=0.5),
     UserIsChatMember(),
+    UserNotRestricted(),
 )
 @a_throttle.throttled(rate=60, on_throttled=too_fast_change_karma_reaction)
 async def on_reaction_change(
