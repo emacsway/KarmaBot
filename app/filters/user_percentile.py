@@ -55,9 +55,13 @@ class UserPercentileFilter(BaseFilter):
                         chat_id=chat.chat_id,
                         text=(
                             f"<b>{hd.quote(user.fullname)}</b>, для изменения кармы с помощью реакций "
-                            f"ваша карма должна быть в пределах Tоп-{self.required_percentile * 100:.0f}%, "
-                            f"в то время как ваша фактическая карма входит в Топ-{reactor_percentile * 100:.0f}%."
+                            f"Ваша карма должна быть в пределах Tоп-{self.required_percentile * 100:.0f}%, "
+                            f"но сейчас она в Топ-{reactor_percentile * 100:.0f}%. "
+                            f"Это необходимо во избежание спама. "
+                            f"Но Вы можете изменить карму пользователю, отправив ему эмоцию ответным сообщением."
                         ),
+                        reply_to_message_id=reaction.message_id,
+                        disable_notification=True,
                     )
                     asyncio.create_task(delete_message(msg, 10))
                 except Exception as e:

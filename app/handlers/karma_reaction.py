@@ -55,7 +55,7 @@ async def too_fast_change_karma_reaction(
         try:
             msg = await bot.send_message(
                 chat_id=chat.chat_id,
-                text=f"<b>{hd.quote(user.fullname)}</b>, Вы слишком часто меняете карму",
+                text=f"<b>{hd.quote(user.fullname)}</b>, Вы слишком часто меняете карму.",
             )
             asyncio.create_task(delete_message(msg, 10))
         except Exception as e:
@@ -152,6 +152,8 @@ async def on_reaction_change(
                 rollback_karma=-how_changed_karma,
                 moderator_event=result_change_karma.moderator_event,
             ),
+            reply_to_message_id=reaction.message_id,
+            disable_notification=True,
         )
 
         # Schedule message deletion
