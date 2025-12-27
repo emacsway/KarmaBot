@@ -7,6 +7,9 @@ from aiogram.types import ReactionTypeEmoji
 
 from app.config.karmic_triggers import MINUS_EMOJI, PLUS_EMOJI
 from app.infrastructure.database.models import Chat, ChatSettings, User, UserKarma
+from app.utils.log import Logger
+
+logger = Logger(__name__)
 
 # Reaction coefficient - multiplier applied to reactor's power
 # karma_change = sign * reactor_power * REACTION_COEFFICIENT
@@ -66,7 +69,7 @@ class KarmaReactionFilter(BaseFilter):
         for new_reaction in reaction.new_reaction:
             if isinstance(new_reaction, ReactionTypeEmoji):
                 sign = get_karma_change_sign_from_reaction(new_reaction.emoji)
-                comment += new_reaction.emoji
+                comment += " +%s" % new_reaction.emoji
                 if sign is not None:
                     karma_change_signs.append(sign)
 
@@ -74,10 +77,12 @@ class KarmaReactionFilter(BaseFilter):
         for old_reaction in reaction.old_reaction:
             if isinstance(old_reaction, ReactionTypeEmoji):
                 sign = get_karma_change_sign_from_reaction(old_reaction.emoji)
+                comment += " -%s" % old_reaction.emoji
                 if sign is not None:
                     # Reverse the previous change
                     karma_change_signs.append(-sign)
 
+        logger.info("Emoji received %s" % comment)
         # If no valid karma changes, return empty dict
         if not karma_change_signs:
             return {}
@@ -99,6 +104,6 @@ class KarmaReactionFilter(BaseFilter):
         return {
             "karma": {
                 "karma_change": total_karma_change,
-                "comment": "(reaction %s)" % (comment,),
+                "comment": "(reaction)%s" % (comment,),
             }
         }

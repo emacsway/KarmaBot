@@ -46,7 +46,7 @@ class UserPercentileFilter(BaseFilter):
         """
         reactor_percentile = await get_user_percentile(user, chat)
 
-        if reactor_percentile is None or reactor_percentile >= self.required_percentile:
+        if reactor_percentile is None or reactor_percentile > self.required_percentile:
             # User either has no karma or is not in top percentile
             if reactor_percentile is not None:
                 # Show informational message for 10 seconds
