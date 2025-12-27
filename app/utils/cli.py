@@ -65,6 +65,6 @@ async def cli(config: Config):
             await on_startup_webhook(bot, config.webhook)
             raise NotImplementedError("webhook are not implemented now")
     finally:
-        await cleanup_task.stop()
+        # await cleanup_task.stop()
         await db.on_shutdown()
         await user_getter.stop()
