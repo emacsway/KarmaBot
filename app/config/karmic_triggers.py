@@ -30,7 +30,7 @@ PLUS_TRIGGERS = frozenset({PLUS, *PLUS_WORDS})
 PLUS_EMOJI = frozenset(
     {
         "👍",
-        "🙏", "💯", "😍", "🤩", "🔥", "💥", "❤‍🔥", "❤", "📝",
+        "🙏", "🤝", "👏", "💯", "🏆", "😍", "🤩", "🔥", "💥", "❤‍🔥", "❤", "📝", "✍",
     }
 )
 MINUS = "-"
