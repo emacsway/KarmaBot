@@ -73,7 +73,7 @@ async def too_fast_change_karma_reaction(
     UserIsChatMember(),
     UserNotRestricted(),
 )
-@a_throttle.throttled(rate=60, on_throttled=too_fast_change_karma_reaction)
+@a_throttle.throttled(rate=15, on_throttled=too_fast_change_karma_reaction)
 async def on_reaction_change(
     reaction: types.MessageReactionUpdated,
     karma: dict,
