@@ -54,7 +54,7 @@ class Message(Model):
         return record.user if record else None
 
     @classmethod
-    async def store_author(cls, chat_id: int, message_id: int, user_id: int) -> "Message":
+    async def store_author(cls, chat_id: int, message_id: int, user_id: int, date: datetime) -> "Message":
         """
         Store a message author.
 
@@ -62,6 +62,7 @@ class Message(Model):
             chat_id: Database chat ID (not Telegram chat_id)
             message_id: Telegram message ID
             user_id: Database user ID
+            date: Message date from Telegram
 
         Returns:
             Created or updated Message record
@@ -69,7 +70,7 @@ class Message(Model):
         record, _ = await cls.update_or_create(
             chat_id=chat_id,
             message_id=message_id,
-            defaults={"user_id": user_id},
+            defaults={"user_id": user_id, "date": date},
         )
         return record
 

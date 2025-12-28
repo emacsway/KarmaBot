@@ -38,12 +38,13 @@ class MessageMiddleware(BaseMiddleware):
         chat: Chat | None = data.get("chat")
 
         # Store message author if we have all required data
-        if user and chat and event.message_id:
+        if user and chat and event.message_id and event.date:
             try:
                 await Message.store_author(
                     chat_id=chat.pk,
                     message_id=event.message_id,
                     user_id=user.pk,
+                    date=event.date,
                 )
                 logger.debug(
                     "Stored message author: chat={chat}, message_id={msg_id}, user={user}",
