@@ -1,5 +1,6 @@
 """Handler for karma changes via message reactions."""
 import asyncio
+from datetime import timedelta
 
 from aiogram import Bot, F, Router, types
 from aiogram.types import LinkPreviewOptions
@@ -13,7 +14,11 @@ from app.filters.user_percentile import UserPercentileFilter
 from app.infrastructure.database.models import Chat, ChatSettings, User
 from app.infrastructure.database.repo.user import UserRepo
 from app.models.config import Config
-from app.services.adaptive_trottle import AdaptiveThrottle
+from app.services.adaptive_trottle import (
+    AdaptiveThrottle,
+    AdaptiveThrottlePerTarget,
+    RateLimit,
+)
 from app.services.change_karma import change_karma
 from app.services.remove_message import delete_message, remove_kb
 from app.utils.exceptions import CantChangeKarma, DontOffendRestricted, SubZeroKarma
@@ -24,6 +29,7 @@ from . import keyboards as kb
 logger = Logger(__name__)
 router = Router(name=__name__)
 a_throttle = AdaptiveThrottle()
+a_throttle_per_target = AdaptiveThrottlePerTarget()
 
 
 def get_how_change_text(number: float) -> str:
@@ -44,18 +50,13 @@ async def too_fast_change_karma_reaction(
     **__
 ):
     """Called when user changes karma via reactions too frequently."""
-    user_id = user.tg_id if user else reaction.user.id
-    logger.info(
-        "User {user} is changing karma via reactions too frequently",
-        user=user_id,
-    )
-
     # Send notification message
     if bot and chat and user:
         try:
             msg = await bot.send_message(
                 chat_id=chat.chat_id,
                 text=f"<b>{hd.quote(user.fullname)}</b>, Вы слишком часто меняете карму.",
+                disable_notification=False
             )
             asyncio.create_task(delete_message(msg, 10))
         except Exception as e:
@@ -73,7 +74,16 @@ async def too_fast_change_karma_reaction(
     UserIsChatMember(),
     UserNotRestricted(),
 )
-@a_throttle.throttled(rate=15, on_throttled=too_fast_change_karma_reaction)
+@a_throttle.throttled(
+    RateLimit(rate=100, duration=timedelta(hours=1)),
+    RateLimit(rate=200, duration=timedelta(days=1)),
+    on_throttled=too_fast_change_karma_reaction,
+)
+@a_throttle_per_target.throttled(
+    RateLimit(rate=30, duration=timedelta(hours=1)),
+    RateLimit(rate=50, duration=timedelta(days=1)),
+    on_throttled=too_fast_change_karma_reaction,
+)
 async def on_reaction_change(
     reaction: types.MessageReactionUpdated,
     karma: dict,

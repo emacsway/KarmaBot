@@ -75,11 +75,19 @@ class CantRestrict(ModerationError):
 
 
 class Throttled(RuntimeError):
-    def __init__(self, key: str, chat_id: int, user_id: int, rate: int | float):
+    def __init__(
+        self,
+        key: str,
+        chat_id: int,
+        user_id: int,
+        rate: int | float,
+        duration: "timedelta" = None,
+    ):
         self.key = key
         self.chat_id = chat_id
         self.user_id = user_id
         self.rate = rate
+        self.duration = duration
 
 
 class CommandError(Exception):

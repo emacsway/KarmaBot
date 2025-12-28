@@ -1,119 +1,169 @@
+"""
+Adaptive throttle decorator using limits library.
+"""
 import asyncio
 import functools
 import typing
-from datetime import datetime, timedelta
+from datetime import timedelta
+from typing import NamedTuple
 
 from aiogram import types
+from limits import RateLimitItemPerSecond
+from limits.aio.storage import MemoryStorage
+from limits.aio.strategies import MovingWindowRateLimiter
 
 from app.infrastructure.database.models import Chat, User
 from app.utils.exceptions import Throttled
 from app.utils.log import Logger
 
 logger = Logger(__name__)
-DEFAULT_RATE = 1
+
+
+class RateLimit(NamedTuple):
+    """Rate limit configuration."""
+    rate: int  # Number of allowed requests
+    duration: timedelta  # Time period
 
 
 class AdaptiveThrottle:
+    """
+    Adaptive throttle using limits library with in-memory storage.
+
+    Limits are applied per user per chat (separately for each chat).
+    """
+
     def __init__(self):
-        self.last_calls = {}
+        self.storage = MemoryStorage()
+        self.strategy = MovingWindowRateLimiter(self.storage)
+
+    def _get_identifier(self, *args, **kwargs) -> str:
+        """
+        Template method for creating rate limit identifier.
+
+        Override this method to customize identifier generation.
+        """
+        user: User = kwargs["user"]
+        chat: Chat = kwargs["chat"]
+        key: str = kwargs["key"]
+        return f"key:{key}:user:{user.tg_id}:chat:{chat.chat_id}"
 
     def throttled(
         self,
-        rate: typing.Union[float, int] = DEFAULT_RATE,
-        key: str = None,
+        *rate_limits: RateLimit,
+        key: typing.Optional[str] = None,
         on_throttled: typing.Optional[typing.Callable] = None,
     ):
-        rate = timedelta(seconds=rate)
+        """
+        Throttle decorator using limits library with multiple rate limits.
+
+        Args:
+            *rate_limits: Variable number of RateLimit tuples (rate, duration)
+            key: Optional custom key (default: function name)
+            on_throttled: Callback called when throttled
+
+        Example:
+            @throttled(
+                RateLimit(rate=10, duration=timedelta(hours=1)),
+                RateLimit(rate=20, duration=timedelta(days=1)),
+            )
+            async def my_handler(...):
+                ...
+        """
+        if not rate_limits:
+            raise ValueError("At least one rate limit must be provided")
+
+        # Convert RateLimit to limits library format
+        limit_items = [
+            RateLimitItemPerSecond(rl.rate, int(rl.duration.total_seconds()))
+            for rl in rate_limits
+        ]
 
         def decorator(func):
             current_key = key if key is not None else func.__name__
 
             @functools.wraps(func)
             async def wrapped(*args, **kwargs):
-                chat: Chat = kwargs["chat"]
                 user: User = kwargs["user"]
-                target: User = kwargs["target"]
-                message: types.Message = args[0]
 
-                if self.check_time_throttle(
-                    message.date,
-                    rate,
-                    current_key,
-                    chat.chat_id,
-                    user.tg_id,
-                    target.tg_id,
-                ):
-                    return await func(*args, **kwargs)
-                else:
-                    await process_on_throttled(on_throttled, current_key, rate, *args, **kwargs)
+                # Create unique identifier using template method
+                user_identifier = self._get_identifier(*args, key=current_key, **kwargs)
+
+                # Try to acquire all rate limits
+                # If any limit is exceeded, handle it immediately
+                for limit_item, violated_limit in zip(limit_items, rate_limits):
+                    # strategy.hit() returns True if allowed, False if rate limit exceeded
+                    if not await self.strategy.hit(limit_item, user_identifier):
+                        # Rate limit exceeded
+                        logger.info(
+                            "User {user} throttled for user_identifier {user_identifier} "
+                            "(limit: {rate}/{duration}s)",
+                            user=user.tg_id,
+                            user_identifier=user_identifier,
+                            rate=violated_limit.rate,
+                            duration=violated_limit.duration,
+                        )
+
+                        # Call on_throttled callback if provided
+                        await process_on_throttled(
+                            on_throttled,
+                            current_key,
+                            violated_limit,
+                            *args,
+                            **kwargs,
+                        )
+                        # Don't call the original function
+                        return None
+
+                # All limits not exceeded, proceed
+                logger.debug(
+                    "Rate limit OK for user {user}, user_identifier {user_identifier}",
+                    user=user.tg_id,
+                    user_identifier=user_identifier,
+                )
+                return await func(*args, **kwargs)
 
             return wrapped
 
         return decorator
 
-    def check_time_throttle(
-        self,
-        call_at: datetime,
-        rate: int,
-        key: str,
-        chat_id: int,
-        user_id: int,
-        target_user_id: int,
-    ):
-        logger.debug(
-            "check throttle time for chat {chat_id}, user {user_id}, "
-            "target {target_user_id} and key {key}",
-            chat_id=chat_id,
-            user_id=user_id,
-            target_user_id=target_user_id,
-            key=key,
-        )
 
-        bucket = self.get_bucket(chat_id, user_id, target_user_id)
+class AdaptiveThrottlePerTarget(AdaptiveThrottle):
+    """
+    Adaptive throttle that tracks limits per user per target per chat.
 
-        try:
-            last = bucket[key]
-        except KeyError:
-            logger.debug(
-                "there is no one last call",
-            )
-            return True
-        finally:
-            bucket[key] = call_at
+    This allows limiting how often a user can perform actions on specific targets,
+    e.g., limiting karma changes to the same user.
+    """
 
-        self.set_bucket(chat_id, user_id, target_user_id, bucket)
-        logger.debug("delta is {delta}", delta=call_at - last)
-        return call_at - last > rate
-
-    def get_bucket(self, chat_id: int, user_id: int, target_user_id: int):
-        return (
-            self.last_calls.setdefault(chat_id, {})
-            .setdefault(user_id, {})
-            .setdefault(target_user_id, {})
-        )
-
-    def set_bucket(self, chat_id: int, user_id: int, target_user_id: int, bucket: dict):
-        self.last_calls.setdefault(chat_id, {}).setdefault(user_id, {})[target_user_id] = bucket
+    def _get_identifier(self, *args, **kwargs) -> str:
+        user: User = kwargs["user"]
+        chat: Chat = kwargs["chat"]
+        key: str = kwargs["key"]
+        target: User = kwargs["target"]
+        return f"key:{key}:user:{user.tg_id}:chat:{chat.chat_id}:target:{target.tg_id}"
 
 
 async def process_on_throttled(
     on_throttled: typing.Callable,
     key: str,
-    rate: typing.Union[float, int],
+    violated_limit: RateLimit,
     *args,
     **kwargs,
 ):
+    """Process on_throttled callback when rate limit is exceeded."""
     if on_throttled:
         if asyncio.iscoroutinefunction(on_throttled):
             await on_throttled(*args, **kwargs)
         else:
             on_throttled(*args, **kwargs)
     else:
-        chat: Chat = kwargs["chat"]
-        user: User = kwargs["user"]
+        # Default behavior: raise Throttled exception
+        user: User = kwargs.get("user")
+        chat: Chat = kwargs.get("chat")
         raise Throttled(
             key=key,
-            rate=rate,
-            chat_id=chat.chat_id,
-            user_id=user.tg_id,
+            chat_id=chat.chat_id if chat else 0,
+            user_id=user.tg_id if user else 0,
+            rate=violated_limit.rate,
+            duration=violated_limit.duration,
         )
