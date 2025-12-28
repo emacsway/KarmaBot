@@ -136,11 +136,9 @@ class AdaptiveThrottlePerTarget(AdaptiveThrottle):
     """
 
     def _get_identifier(self, *args, **kwargs) -> str:
-        user: User = kwargs["user"]
-        chat: Chat = kwargs["chat"]
-        key: str = kwargs["key"]
         target: User = kwargs["target"]
-        return f"key:{key}:user:{user.tg_id}:chat:{chat.chat_id}:target:{target.tg_id}"
+        base = super()._get_identifier(*args, **kwargs)
+        return f"{base}:target:{target.tg_id}"
 
 
 async def process_on_throttled(

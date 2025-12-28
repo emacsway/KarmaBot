@@ -9,16 +9,16 @@ from aiogram.types import ContentType, LinkPreviewOptions
 from aiogram.utils.text_decorations import html_decoration as hd
 
 from app.filters import HasTargetFilter, KarmaFilter
+from app.handlers.decorators.throttle import (
+    RateLimit,
+    Throttle,
+    ThrottlePerTarget,
+)
 from app.infrastructure.database.models import Chat, ChatSettings, User
 from app.infrastructure.database.repo.user import UserRepo
 from app.models.config import Config
-from app.services.adaptive_trottle import (
-    AdaptiveThrottle,
-    AdaptiveThrottlePerTarget,
-    RateLimit,
-)
 from app.services.change_karma import cancel_karma_change, change_karma
-from app.services.remove_message import remove_kb
+from app.services.remove_message import delete_message, remove_kb
 from app.utils.exceptions import CantChangeKarma, DontOffendRestricted, SubZeroKarma
 from app.utils.log import Logger
 
@@ -29,8 +29,8 @@ from . import keyboards as kb
 
 logger = Logger(__name__)
 router = Router(name=__name__)
-a_throttle = AdaptiveThrottle()
-a_throttle_per_target = AdaptiveThrottlePerTarget()
+throttle = Throttle()
+throttle_per_target = ThrottlePerTarget()
 
 
 def get_how_change_text(number: float) -> str:
@@ -42,8 +42,19 @@ def get_how_change_text(number: float) -> str:
         raise ValueError("karma_trigger must be float and not 0")
 
 
-async def too_fast_change_karma(message: types.Message, *_, **__):
-    return await message.reply("Вы слишком часто меняете карму")
+async def too_fast_change_karma(message: types.Message, target: User | None = None, *_, **__):
+    if target is not None:
+        text = f"Вы слишком часто меняете карму пользователю {hd.quote(target.fullname)}."
+    else:
+        text = "Вы слишком часто меняете карму"
+    try:
+        msg = await message.reply(text)
+        asyncio.create_task(delete_message(msg, 10))
+    except Exception as e:
+        logger.warning(
+            "Failed to send throttle notification: {error}",
+            error=e,
+        )
 
 
 @router.message(
@@ -63,14 +74,14 @@ async def too_fast_change_karma(message: types.Message, *_, **__):
         ]
     ),
 )
-@a_throttle.throttled(
-    RateLimit(rate=10, duration=timedelta(hours=1)),
-    RateLimit(rate=20, duration=timedelta(days=1)),
-    on_throttled=too_fast_change_karma,
-)
-@a_throttle_per_target.throttled(
+@throttle_per_target.throttled(
     RateLimit(rate=3, duration=timedelta(hours=1)),
     RateLimit(rate=5, duration=timedelta(days=1)),
+    on_throttled=too_fast_change_karma,
+)
+@throttle.throttled(
+    RateLimit(rate=10, duration=timedelta(hours=1)),
+    RateLimit(rate=20, duration=timedelta(days=1)),
     on_throttled=too_fast_change_karma,
 )
 async def karma_change(
@@ -94,6 +105,7 @@ async def karma_change(
             bot=bot,
             user_repo=user_repo,
             comment=karma["comment"],
+            date=message.date
         )
     except SubZeroKarma:
         return await message.reply("У Вас слишком мало кармы для этого")

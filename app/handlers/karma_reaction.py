@@ -11,14 +11,14 @@ from app.filters.reaction_has_target import ReactionHasTargetFilter
 from app.filters.user_is_chat_member import UserIsChatMember
 from app.filters.user_not_restricted import UserNotRestricted
 from app.filters.user_percentile import UserPercentileFilter
+from app.handlers.decorators.throttle import (
+    RateLimit,
+    Throttle,
+    ThrottlePerTarget,
+)
 from app.infrastructure.database.models import Chat, ChatSettings, User
 from app.infrastructure.database.repo.user import UserRepo
 from app.models.config import Config
-from app.services.adaptive_trottle import (
-    AdaptiveThrottle,
-    AdaptiveThrottlePerTarget,
-    RateLimit,
-)
 from app.services.change_karma import change_karma
 from app.services.remove_message import delete_message, remove_kb
 from app.utils.exceptions import CantChangeKarma, DontOffendRestricted, SubZeroKarma
@@ -28,8 +28,8 @@ from . import keyboards as kb
 
 logger = Logger(__name__)
 router = Router(name=__name__)
-a_throttle = AdaptiveThrottle()
-a_throttle_per_target = AdaptiveThrottlePerTarget()
+throttle = Throttle()
+throttle_per_target = ThrottlePerTarget()
 
 
 def get_how_change_text(number: float) -> str:
@@ -46,16 +46,21 @@ async def too_fast_change_karma_reaction(
     user: User | None = None,
     chat: Chat | None = None,
     bot: Bot | None = None,
+    target: User | None = None,
     *_,
     **__
 ):
     """Called when user changes karma via reactions too frequently."""
     # Send notification message
+    if target is not None:
+        text = f"<b>{hd.quote(user.fullname)}</b>, Вы слишком часто меняете карму пользователю {hd.quote(target.fullname)}."
+    else:
+        text = f"<b>{hd.quote(user.fullname)}</b>, Вы слишком часто меняете карму."
     if bot and chat and user:
         try:
             msg = await bot.send_message(
                 chat_id=chat.chat_id,
-                text=f"<b>{hd.quote(user.fullname)}</b>, Вы слишком часто меняете карму.",
+                text=text,
                 disable_notification=False
             )
             asyncio.create_task(delete_message(msg, 10))
@@ -74,14 +79,14 @@ async def too_fast_change_karma_reaction(
     UserIsChatMember(),
     UserNotRestricted(),
 )
-@a_throttle.throttled(
-    RateLimit(rate=100, duration=timedelta(hours=1)),
-    RateLimit(rate=200, duration=timedelta(days=1)),
+@throttle_per_target.throttled(
+    RateLimit(rate=3, duration=timedelta(hours=1)),
+    RateLimit(rate=5, duration=timedelta(days=1)),
     on_throttled=too_fast_change_karma_reaction,
 )
-@a_throttle_per_target.throttled(
-    RateLimit(rate=30, duration=timedelta(hours=1)),
-    RateLimit(rate=50, duration=timedelta(days=1)),
+@throttle.throttled(
+    RateLimit(rate=10, duration=timedelta(hours=1)),
+    RateLimit(rate=20, duration=timedelta(days=1)),
     on_throttled=too_fast_change_karma_reaction,
 )
 async def on_reaction_change(
@@ -110,6 +115,7 @@ async def on_reaction_change(
             bot=bot,
             user_repo=user_repo,
             comment=karma["comment"],
+            date=reaction.date
         )
     except SubZeroKarma:
         return  # Silent fail for reactions

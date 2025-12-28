@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from aiogram import Bot
 from aiogram.types import ChatPermissions
 from tortoise.transactions import in_transaction
@@ -39,6 +41,7 @@ async def change_karma(
     user_repo: UserRepo,
     comment: str = "",
     is_reward: bool = False,
+    date: datetime | None = None,
 ) -> ResultChangeKarma:
     if not can_change_karma(target_user, user):
         logger.info("user {user} try to change self or bot karma ", user=user.tg_id)
@@ -68,6 +71,7 @@ async def change_karma(
             how_change=relative_change,
             how_change_absolute=abs_change,
             comment=comment[:200],
+            date=date,
         )
         await ke.save(using_db=conn)
         logger.info(
