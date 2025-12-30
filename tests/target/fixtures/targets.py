@@ -103,3 +103,67 @@ def get_from_user(id_=777, username=None, first_name="Bob"):
         "first_name": first_name,
         "is_bot": False,
     }
+
+
+def get_channel_message_with_text_mention(target_user: dict, text_parts: typing.List[str]) -> types.Message:
+    """Create automatically forwarded channel message with text_mention."""
+    first_name = target_user["first_name"]
+    text_parts[1] = first_name
+    msg_text = " ".join(text_parts)
+    start_pos = len(text_parts[0]) + 1
+
+    return types.Message(
+        message_id=1,
+        date=datetime.now(),
+        chat=types.Chat(id=1, type="group"),
+        is_automatic_forward=True,
+        sender_chat=types.Chat(id=999, type="channel", title="News Channel"),
+        text=msg_text,
+        entities=[get_entity_text_mention(start_pos, target_user)],
+    )
+
+
+def get_channel_message_with_mention(target_user: dict, text_parts: typing.List[str]) -> types.Message:
+    """Create channel message with @mention."""
+    username = get_user_username(target_user)
+    text_parts[1] = username
+    msg_text = " ".join(text_parts)
+    start_pos = len(text_parts[0]) + 1
+
+    return types.Message(
+        message_id=1,
+        date=datetime.now(),
+        chat=types.Chat(id=1, type="group"),
+        is_automatic_forward=True,
+        sender_chat=types.Chat(id=999, type="channel", title="News Channel"),
+        text=msg_text,
+        entities=[get_entity_mention(start_pos, len(username))],
+    )
+
+
+def get_channel_message_no_mentions(text: str) -> types.Message:
+    """Create channel message without any mentions."""
+    return types.Message(
+        message_id=1,
+        date=datetime.now(),
+        chat=types.Chat(id=1, type="group"),
+        is_automatic_forward=True,
+        sender_chat=types.Chat(id=999, type="channel", title="News Channel"),
+        text=text,
+        entities=None,
+    )
+
+
+def get_message_with_reply_to_channel(
+    author_user: dict, channel_msg: types.Message, text: str, entities: typing.List[types.MessageEntity] = None
+) -> types.Message:
+    """Create message replying to a channel message."""
+    return types.Message(
+        message_id=2,
+        date=datetime.now(),
+        chat=types.Chat(id=1, type="group"),
+        from_user=types.User(**author_user),
+        text=text,
+        entities=entities,
+        reply_to_message=channel_msg,
+    )
