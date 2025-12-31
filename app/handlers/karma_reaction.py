@@ -75,7 +75,7 @@ async def too_fast_change_karma_reaction(
     F.chat.type.in_(["group", "supergroup"]),
     ReactionHasTargetFilter(),
     KarmaReactionFilter(),
-    UserPercentileFilter(required_percentile=0.5),
+    UserPercentileFilter(required_percentile=0.75),
     UserIsChatMember(),
     UserNotRestricted(),
 )
